@@ -1,0 +1,40 @@
+name: Convert Markdown to PDFs
+
+on:
+  push:
+    paths:
+      - '**/*.md'
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v3
+
+    - name: Set up Node.js
+      uses: actions/setup-node@v3
+      with:
+        node-version: '18'  # Puedes usar la versión de Node.js que prefieras
+
+    - name: Install dependencies
+      run: |
+        npm install -g markdown-pdf
+
+    - name: Convert Markdown to PDFs
+      run: |
+        mkdir -p pdfs
+        find . -name '*.md' | while read file; do
+          # Extraer el nombre del archivo sin la extensión
+          filename=$(basename "$file" .md)
+          # Convertir el archivo Markdown a PDF usando markdown-pdf
+          echo "Convirtiendo $file a pdfs/${filename}.pdf"
+          markdown-pdf "$file" -o "pdfs/${filename}.pdf"
+        done
+
+    - name: Upload PDFs as Artifacts
+      uses: actions/upload-artifact@v3
+      with:
+        name: pdfs
+        path: pdfs/**
