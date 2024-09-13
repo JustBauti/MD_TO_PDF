@@ -1,4 +1,4 @@
-name: Convert Markdown to PDFs
+name: Convert Modified Markdown to PDFs and Notify
 
 on:
   push:
@@ -16,25 +16,63 @@ jobs:
     - name: Set up Node.js
       uses: actions/setup-node@v3
       with:
-        node-version: '18'  
+        node-version: '18'
+
+    - name: List modified Markdown files
+      id: list_modified_files
+      run: |
+        git fetch --depth=2
+        modified_files=$(git diff --name-only HEAD~1 HEAD | grep '\.md$')
+        echo "Modified Markdown files: $modified_files"
+        echo "::set-output name=files::$modified_files"
+
+    - name: Check if there are modified Markdown files
+      id: check_files
+      run: |
+        files="${{ steps.list_modified_files.outputs.files }}"
+        if [ -z "$files" ]; then
+          echo "No Markdown files modified. Cancelling the workflow."
+          exit 0
+        fi
 
     - name: Install dependencies
       run: |
         npm install -g markdown-pdf
-
-    - name: Convert Markdown to PDFs
-      run: |
         mkdir -p pdfs
-        find . -name '*.md' | while read file; do
-          # Extraer el nombre del archivo sin la extensión
+
+    - name: Convert Modified Markdown Files to PDFs
+      run: |
+        files="${{ steps.list_modified_files.outputs.files }}"
+        for file in $files; do
           filename=$(basename "$file" .md)
-          # Convertir el archivo Markdown a PDF usando markdown-pdf
           echo "Convirtiendo $file a pdfs/${filename}.pdf"
           markdown-pdf "$file" -o "pdfs/${filename}.pdf"
         done
 
-    - name: Upload PDFs as Artifacts
-      uses: actions/upload-artifact@v3
+    - name: Zip PDFs
+      run: |
+        zip -r pdfs.zip pdfs
+
+    - name: Announcerr
+      uses: singhkshitij/announcerr@v2.0
       with:
-        name: pdfs
-        path: pdfs/**
+        server_address: smtp.gmail.com
+        server_port: 465
+        username: ${{ secrets.MAIL_USERNAME }}
+        password: ${{ secrets.MAIL_PASSWORD }}
+        subject: Nuevos PDFs Generados {{MAIL_CLIENT}} || {{secrets.CLIENT_DRIVE}}
+        body: |
+          <html>
+          <body>
+            <p>Hola equipo,</p>
+            <p>Se han generado PDFs a partir de los archivos Markdown modificados en el repositorio <strong>${{ github.repository }}</strong>.</p>
+            <p>El archivo comprimido con los PDFs está adjunto.</p>
+            <p><strong>Detalles del Commit:</strong></p>
+            <p>Autor: ${{ github.actor }}</p>
+            <p>Mensaje del Commit: ${{ github.event.head_commit.message }}</p>
+          </body>
+          </html>
+        content_type: text/html
+        to: ${{secrets.MAIL_USERNAME}}
+        from: ${{secrets.MAIL_CLIENT}}
+        attachments: pdfs.zip
