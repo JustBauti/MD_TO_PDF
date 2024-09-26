@@ -25,7 +25,6 @@ jobs:
         modified_files=$(git diff --name-only HEAD~1 HEAD | grep '\.md$')
         echo "Modified Markdown files: $modified_files"
         echo "::set-output name=files::$modified_files"
-
     - name: Check if there are modified Markdown files
       id: check_files
       run: |
@@ -34,12 +33,10 @@ jobs:
           echo "No Markdown files modified. Cancelling the workflow."
           exit 0
         fi
-
     - name: Install dependencies
       run: |
         npm install -g markdown-pdf
         mkdir -p pdfs
-
     - name: Convert Modified Markdown Files to PDFs
       run: |
         files="${{ steps.list_modified_files.outputs.files }}"
@@ -48,31 +45,67 @@ jobs:
           echo "Convirtiendo $file a pdfs/${filename}.pdf"
           markdown-pdf "$file" -o "pdfs/${filename}.pdf"
         done
-
     - name: Zip PDFs
       run: |
         zip -r pdfs.zip pdfs
+    - name: Send Email with Attached Zip
+      env:
+        EMAIL_SENDER: ${{ secrets.correo_envia }}
+        EMAIL_RECIPIENT: ${{ secrets.correo_llega }}
+        USERNAME: ${{ secrets.username }}
+        PASSWORD: ${{ secrets.password }}
+      run: |
+        python3 -c "
+        import smtplib
+        from datetime import datetime
+        from email.mime.text import MIMEText
+        from email.mime.multipart import MIMEMultipart
+        from email.mime.base import MIMEBase
+        from email import encoders
+        import os
 
-    - name: Announcerr
-      uses: singhkshitij/announcerr@v2.0
-      with:
-        server_address: smtp.gmail.com
-        server_port: 465
-        username: ${{ secrets.MAIL_USERNAME }}
-        password: ${{ secrets.MAIL_PASSWORD }}
-        subject: Nuevos PDFs Generados {{MAIL_CLIENT}} || {{secrets.CLIENT_DRIVE}}
-        body: |
-          <html>
-          <body>
+        sender = os.environ.get('EMAIL_SENDER')
+        recipient = os.environ.get('EMAIL_RECIPIENT')
+        username = os.environ.get('USERNAME')
+        password = os.environ.get('PASSWORD')
+
+        SMTP_SERVER = 'email-smtp.us-east-2.amazonaws.com'
+        SMTP_PORT = 587
+        def send_email(sender, recipient, subject, body_html, attachment):
+            msg = MIMEMultipart()
+            msg['Subject'] = subject
+            msg['From'] = sender
+            msg['To'] = recipient
+            msg.attach(MIMEText(body_html, 'html'))
+            with open(attachment, 'rb') as f:
+              part = MIMEBase('application', 'octet-stream')
+              part.set_payload(f.read())
+              encoders.encode_base64(part)
+              part.add_header('Content-Disposition', f'attachment; filename={os.path.basename(attachment)}')
+              msg.attach(part)
+            with smtplib.SMTP(SMTP_SERVER, SMTP_PORT) as server:
+              server.starttls()
+              server.login(username, password)
+              server.sendmail(sender, recipient, msg.as_string())
+        
+
+        commit_message = os.environ.get('GITHUB_EVENT_HEAD_COMMIT_MESSAGE')
+        if commit_message is None:
+            commit_message = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+
+        
+        body=f'''
+            <html>
+            <body>
             <p>Hola equipo,</p>
-            <p>Se han generado PDFs a partir de los archivos Markdown modificados en el repositorio <strong>${{ github.repository }}</strong>.</p>
-            <p>El archivo comprimido con los PDFs está adjunto.</p>
-            <p><strong>Detalles del Commit:</strong></p>
-            <p>Autor: ${{ github.actor }}</p>
-            <p>Mensaje del Commit: ${{ github.event.head_commit.message }}</p>
-          </body>
-          </html>
-        content_type: text/html
-        to: ${{secrets.MAIL_USERNAME}}
-        from: ${{secrets.MAIL_CLIENT}}
-        attachments: pdfs.zip
+                    <p>Se han generado PDFs a partir de los archivos Markdown modificados en el repositorio <strong>{os.environ.get('GITHUB_REPOSITORY')}</strong>.</p>
+                      <p>El archivo comprimido con los PDFs está adjunto.</p>
+                      <p><strong>Detalles del Commit:</strong></p>
+                      <p>Autor: {os.environ.get('GITHUB_ACTOR')}</p>
+                      <p>Mensaje del Commit: {commit_message}</p>
+            </body>
+            </html>
+            '''
+
+        send_email(sender, recipient, 'Nuevos PDFs Generados', body, 'pdfs.zip')
+        "
